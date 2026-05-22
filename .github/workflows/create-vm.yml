@@ -77,3 +77,16 @@ jobs:
         run: |
           echo "===== 抢购结果: ${{ steps.create_vm.outcome }} ====="
           echo "${{ steps.create_vm.outputs.log_data }}"
+
+      - name: Send WeCom Notification
+        if: always()
+        run: |
+          STATUS="${{ steps.create_vm.outcome }}"
+          if [ "$STATUS" = "success" ]; then
+            MSG="✅ OCI ARM 实例抢购成功！\n区域: Phoenix (us-phoenix-1)\n请立即登录 OCI 控制台查看实例并关闭本工作流！"
+          else
+            MSG="⏳ OCI ARM 实例抢购中...\n区域: Phoenix (us-phoenix-1)\n状态: Out of capacity，将继续重试（每10分钟一次）"
+          fi
+          curl -s -X POST "${{ secrets.WECOM_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"$MSG\"}}"
