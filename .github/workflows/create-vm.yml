@@ -3,6 +3,8 @@ on:
   schedule:
     - cron: "0 */5 * * *"
   workflow_dispatch:
+permissions:
+  actions: write
 env:
   COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
   IMAGE_ID: "ocid1.image.oc1.phx.aaaaaaaaufk34i3h6pc66mifse3yqpstkdbbohmlgpry7gu2ew6fq7faf5pa"
@@ -77,7 +79,14 @@ jobs:
 
               curl -s -X POST "${{ secrets.WECOM_WEBHOOK_URL }}" \
                 -H "Content-Type: application/json" \
-                -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"🎉 OCI ARM 实例抢购成功！\n区域: Phoenix (us-phoenix-1)\n第 $ATTEMPT 次尝试成功\n请立即去 OCI 控制台查看并关闭 GitHub Actions 工作流！\"}}"
+                -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"🎉 OCI ARM 实例抢购成功！\n区域: Phoenix (us-phoenix-1)\n第 $ATTEMPT 次尝试成功\n工作流已自动关闭，请登录 OCI 控制台查看实例！\"}}"
+
+              # 自动禁用工作流，防止重复创建
+              curl -s -X PUT \
+                -H "Authorization: Bearer ${{ github.token }}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/workflows/create-vm.yml/disable"
+              echo "工作流已自动关闭"
               exit 0
             else
               # 随机等待 60~70 秒再重试
