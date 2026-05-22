@@ -72,18 +72,8 @@ jobs:
             exit 1
           fi
 
-      - name: Send Discord Notification
-        if: always() && secrets.DISCORD_WEBHOOK_URL != ''
-        uses: sarisia/actions-status-discord@v1.15.4
-        with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          title: "OCI VM Status: ${{ steps.create_vm.outcome }}"
-          status: ${{ steps.create_vm.outcome }}
-          color: ${{ steps.create_vm.outcome == 'success' && '0x28a745' || '0xdc3545' }}
-          description: |
-            Phoenix 区域 ARM 实例抢购结果
-            **状态:** `${{ steps.create_vm.outcome }}`
-            **日志:**
-            ```
-            ${{ steps.create_vm.outputs.log_data }}
-            ```
+      - name: Print Result
+        if: always()
+        run: |
+          echo "===== 抢购结果: ${{ steps.create_vm.outcome }} ====="
+          echo "${{ steps.create_vm.outputs.log_data }}"
