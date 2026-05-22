@@ -1,7 +1,7 @@
 name: Try to Create OCI VM
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "0 */5 * * *"
   workflow_dispatch:
 env:
   COMPARTMENT_ID: ${{ secrets.OCI_COMPARTMENT_ID }}
@@ -17,6 +17,7 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 300
     steps:
       - name: Cache pip packages
         id: cache-pip
@@ -28,12 +29,8 @@ jobs:
       - name: Add OCI CLI to path
         run: echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Setup OCI CLI and Try to Create VM
-        id: create_vm
-        continue-on-error: true
+      - name: Setup OCI CLI
         run: |
-          set -o pipefail
-
           pip install oci-cli
 
           mkdir -p ~/.oci
@@ -48,45 +45,44 @@ jobs:
           echo "region=${{ env.OCI_CLI_REGION }}" >> ~/.oci/config
           echo "${{ secrets.SSH_PUBLIC_KEY }}" > /home/runner/my_ssh_key.pub
 
-          OCI_OUTPUT=$(oci compute instance launch \
-            --compartment-id "$COMPARTMENT_ID" \
-            --availability-domain "$AD_NAME" \
-            --shape "VM.Standard.A1.Flex" \
-            --shape-config '{"ocpus":4,"memoryInGBs":24}' \
-            --subnet-id "$SUBNET_ID" \
-            --image-id "$IMAGE_ID" \
-            --ssh-authorized-keys-file "/home/runner/my_ssh_key.pub" \
-            --assign-public-ip true \
-            --display-name "free-arm-vm" \
-            --boot-volume-size-in-gbs 200 2>&1 || true)
-
-          echo "log_data<<EOF" >> $GITHUB_OUTPUT
-          echo "$OCI_OUTPUT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-          if echo "$OCI_OUTPUT" | grep -q '"lifecycle-state": "PROVISIONING"'; then
-            echo "Success! VM is PROVISIONING."
-            exit 0
-          else
-            echo "Failed: $OCI_OUTPUT"
-            exit 1
-          fi
-
-      - name: Print Result
-        if: always()
+      - name: Loop and Try to Create VM (60~70s interval)
+        id: create_vm
         run: |
-          echo "===== 抢购结果: ${{ steps.create_vm.outcome }} ====="
-          echo "${{ steps.create_vm.outputs.log_data }}"
+          ATTEMPT=0
+          while true; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "===== 第 $ATTEMPT 次尝试 $(date '+%H:%M:%S') ====="
 
-      - name: Send WeCom Notification
-        if: always()
-        run: |
-          STATUS="${{ steps.create_vm.outcome }}"
-          if [ "$STATUS" = "success" ]; then
-            MSG="✅ OCI ARM 实例抢购成功！\n区域: Phoenix (us-phoenix-1)\n请立即登录 OCI 控制台查看实例并关闭本工作流！"
-          else
-            MSG="⏳ OCI ARM 实例抢购中...\n区域: Phoenix (us-phoenix-1)\n状态: Out of capacity，将继续重试（每10分钟一次）"
-          fi
-          curl -s -X POST "${{ secrets.WECOM_WEBHOOK_URL }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"$MSG\"}}"
+            OCI_OUTPUT=$(oci compute instance launch \
+              --compartment-id "$COMPARTMENT_ID" \
+              --availability-domain "$AD_NAME" \
+              --shape "VM.Standard.A1.Flex" \
+              --shape-config '{"ocpus":4,"memoryInGBs":24}' \
+              --subnet-id "$SUBNET_ID" \
+              --image-id "$IMAGE_ID" \
+              --ssh-authorized-keys-file "/home/runner/my_ssh_key.pub" \
+              --assign-public-ip true \
+              --display-name "free-arm-vm" \
+              --boot-volume-size-in-gbs 200 2>&1 || true)
+
+            echo "$OCI_OUTPUT"
+
+            if echo "$OCI_OUTPUT" | grep -q '"lifecycle-state": "PROVISIONING"'; then
+              echo "🎉 抢购成功！"
+              echo "success=true" >> $GITHUB_OUTPUT
+
+              # 提取实例 IP
+              INSTANCE_ID=$(echo "$OCI_OUTPUT" | grep '"id"' | head -1 | awk -F'"' '{print $4}')
+              echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+
+              curl -s -X POST "${{ secrets.WECOM_WEBHOOK_URL }}" \
+                -H "Content-Type: application/json" \
+                -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"🎉 OCI ARM 实例抢购成功！\n区域: Phoenix (us-phoenix-1)\n第 $ATTEMPT 次尝试成功\n请立即去 OCI 控制台查看并关闭 GitHub Actions 工作流！\"}}"
+              exit 0
+            else
+              # 随机等待 60~70 秒再重试
+              WAIT=$((60 + RANDOM % 11))
+              echo "容量不足，等待 ${WAIT} 秒后重试..."
+              sleep $WAIT
+            fi
+          done
